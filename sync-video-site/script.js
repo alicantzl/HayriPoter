@@ -4,6 +4,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const hostSection = document.getElementById('hostSection');
     const joinSection = document.getElementById('joinSection');
     const videoSection = document.getElementById('videoSection');
+    const launchScreen = document.getElementById('launchScreen');
 
     const videoLinkInput = document.getElementById('videoLink');
     const audioLinkInput = document.getElementById('audioLink');
@@ -30,16 +31,27 @@ document.addEventListener('DOMContentLoaded', () => {
     const applyMediaLinksBtn = document.getElementById('applyMediaLinksBtn');
 
     const isMobile = window.matchMedia('(max-width: 720px), (pointer: coarse)').matches;
-    const SYNC_INTERVAL_MS = 700;
-    const HARD_SYNC_THRESHOLD_SEC = 1.2;
+    const HOST_SYNC_INTERVAL_MS = 900;
+    const HARD_SYNC_THRESHOLD_SEC = 1.8;
+    const SOFT_SYNC_THRESHOLD_SEC = 0.45;
 
     let socket = null;
     let isHost = false;
     let roomId = null;
-    let isPlaying = false;
     let lastSyncAt = 0;
     let suppressLocalEvents = false;
     let lastServerState = { isPlaying: false, currentTime: 0 };
+    let nextParticipantPlayAttemptAt = 0;
+
+    setTimeout(() => {
+        if (!launchScreen) {
+            return;
+        }
+        launchScreen.classList.add('is-hidden');
+        setTimeout(() => {
+            launchScreen.remove();
+        }, 500);
+    }, 650);
 
     function getSocketServerUrl() {
         const configuredUrl = window.APP_CONFIG && window.APP_CONFIG.SOCKET_SERVER_URL;
@@ -50,13 +62,15 @@ document.addEventListener('DOMContentLoaded', () => {
         return io(getSocketServerUrl(), {
             transports: ['websocket', 'polling'],
             reconnection: true,
-            reconnectionAttempts: 12,
-            reconnectionDelay: 1000
+            reconnectionAttempts: 14,
+            reconnectionDelay: 900,
+            timeout: 9000
         });
     }
 
     function setConnectionStatus(state, roleLabel) {
         const roleText = roleLabel ? ` (${roleLabel})` : '';
+
         if (state === 'connected') {
             statusTextSpan.textContent = `[OK] Baglanti kuruldu${roleText}`;
         } else if (state === 'reconnecting') {
@@ -66,11 +80,13 @@ document.addEventListener('DOMContentLoaded', () => {
         } else {
             statusTextSpan.textContent = `[...] Baglanti kuruluyor${roleText}...`;
         }
+
         connectionStatusDiv.className = `status-indicator ${state}`;
     }
 
     function bindSocketStatusEvents(activeSocket, roleLabel) {
         setConnectionStatus('connecting', roleLabel);
+
         activeSocket.on('connect', () => setConnectionStatus('connected', roleLabel));
         activeSocket.on('disconnect', () => setConnectionStatus('disconnected', roleLabel));
         activeSocket.on('connect_error', () => setConnectionStatus('reconnecting', roleLabel));
@@ -78,9 +94,12 @@ document.addEventListener('DOMContentLoaded', () => {
         activeSocket.io.on('reconnect', () => setConnectionStatus('connected', roleLabel));
     }
 
+    function markLiveMode(enabled) {
+        videoSection.classList.toggle('stage-live', enabled);
+    }
+
     function applyRoleUi() {
         videoSection.classList.toggle('participant-locked', !isHost);
-        videoSection.classList.toggle('mobile-view', isMobile);
         videoSection.classList.toggle('mobile-participant', isMobile && !isHost);
 
         hostSettingsPanel.classList.toggle('hidden', !isHost);
@@ -89,12 +108,12 @@ document.addEventListener('DOMContentLoaded', () => {
         next15sBtn.disabled = !isHost;
         playPauseBtn.disabled = !isHost;
 
-        if (!isHost) {
-            videoPlayer.controls = false;
-            playPauseBtn.innerHTML = '🔒 Host kontrolunde';
-        } else {
+        if (isHost) {
             videoPlayer.controls = true;
-            playPauseBtn.innerHTML = videoPlayer.paused ? '▶️ Oynat' : '⏸️ Duraklat';
+            playPauseBtn.innerHTML = videoPlayer.paused ? '▶ Oynat' : '⏸ Duraklat';
+        } else {
+            videoPlayer.controls = false;
+            playPauseBtn.innerHTML = 'Host kontrolunde';
         }
     }
 
@@ -105,13 +124,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             await videoPlayer.requestFullscreen();
-        } catch (_err) {
-            setConnectionStatus('connected', isHost ? 'Host' : 'Katilimci');
+        } catch (_error) {
+            // no-op: mobile browser can reject unless strict user gesture
         }
     }
 
     function setupVideoPlayer(videoLink, audioLink, subtitleLink) {
         videoPlayer.src = videoLink || '';
+
         if (subtitleLink) {
             subtitleTrack.src = subtitleLink;
             subtitleTrack.mode = 'showing';
@@ -119,9 +139,11 @@ document.addEventListener('DOMContentLoaded', () => {
             subtitleTrack.src = '';
             subtitleTrack.mode = 'disabled';
         }
+
         if (audioLink) {
             console.log('Separate audio link provided:', audioLink);
         }
+
         videoPlayer.load();
     }
 
@@ -131,7 +153,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         const now = Date.now();
-        if (!force && now - lastSyncAt < SYNC_INTERVAL_MS) {
+        if (!force && now - lastSyncAt < HOST_SYNC_INTERVAL_MS) {
             return;
         }
 
@@ -142,25 +164,40 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    function applyIncomingMediaState(state) {
-        lastServerState = {
+    function applyParticipantSyncState(state) {
+        const incoming = {
             isPlaying: Boolean(state.isPlaying),
             currentTime: Number(state.currentTime) || 0
         };
+        lastServerState = incoming;
+
+        const compensation = incoming.isPlaying ? 0.28 : 0;
+        const targetTime = incoming.currentTime + compensation;
+        const drift = targetTime - videoPlayer.currentTime;
+        const absDrift = Math.abs(drift);
 
         suppressLocalEvents = true;
-        const drift = Math.abs(videoPlayer.currentTime - lastServerState.currentTime);
-        if (drift > HARD_SYNC_THRESHOLD_SEC || videoPlayer.paused !== !lastServerState.isPlaying) {
-            videoPlayer.currentTime = lastServerState.currentTime;
-        }
 
-        if (lastServerState.isPlaying) {
-            videoPlayer.play().catch(() => {});
+        if (absDrift > HARD_SYNC_THRESHOLD_SEC) {
+            videoPlayer.currentTime = targetTime;
+        } else if (absDrift > SOFT_SYNC_THRESHOLD_SEC && incoming.isPlaying) {
+            videoPlayer.playbackRate = drift > 0 ? 1.06 : 0.94;
         } else {
-            videoPlayer.pause();
+            videoPlayer.playbackRate = 1;
         }
 
-        isPlaying = lastServerState.isPlaying;
+        if (incoming.isPlaying) {
+            if (videoPlayer.paused && Date.now() >= nextParticipantPlayAttemptAt) {
+                videoPlayer.play().catch(() => {
+                    nextParticipantPlayAttemptAt = Date.now() + 1800;
+                });
+            }
+        } else {
+            if (!videoPlayer.paused) {
+                videoPlayer.pause();
+            }
+        }
+
         suppressLocalEvents = false;
     }
 
@@ -173,16 +210,15 @@ document.addEventListener('DOMContentLoaded', () => {
             if (isHost) {
                 return;
             }
-            applyIncomingMediaState(state);
+            applyParticipantSyncState(state);
         });
 
         activeSocket.on('media-source-update', (media) => {
             setupVideoPlayer(media.videoLink, media.audioLink, media.subtitleLink);
-            applyIncomingMediaState({
+            applyParticipantSyncState({
                 isPlaying: media.isPlaying,
                 currentTime: media.currentTime
             });
-            alert('Host yeni film ayari uyguladi. Oynatici guncellendi.');
         });
 
         activeSocket.on('disconnected-from-room', () => {
@@ -194,6 +230,16 @@ document.addEventListener('DOMContentLoaded', () => {
         activeSocket.on('error', (message) => {
             alert(message);
         });
+    }
+
+    function connectAs(roleLabel) {
+        if (socket) {
+            socket.removeAllListeners();
+            socket.disconnect();
+        }
+        socket = createSocketConnection();
+        bindSocketStatusEvents(socket, roleLabel);
+        registerRoomEvents(socket);
     }
 
     hostTab.addEventListener('click', () => {
@@ -220,13 +266,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        if (socket) {
-            socket.disconnect();
-        }
-        socket = createSocketConnection();
-        bindSocketStatusEvents(socket, 'Host');
-        registerRoomEvents(socket);
-
+        connectAs('Host');
         socket.emit('create-room', { videoLink, audioLink, subtitleLink });
 
         socket.on('room-created', async (data) => {
@@ -236,6 +276,7 @@ document.addEventListener('DOMContentLoaded', () => {
             hostSection.classList.remove('active');
             joinSection.classList.remove('active');
             videoSection.classList.remove('hidden');
+            markLiveMode(true);
 
             setupVideoPlayer(videoLink, audioLink, subtitleLink);
             hostVideoLinkInput.value = videoLink;
@@ -258,13 +299,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        if (socket) {
-            socket.disconnect();
-        }
-        socket = createSocketConnection();
-        bindSocketStatusEvents(socket, 'Katilimci');
-        registerRoomEvents(socket);
-
+        connectAs('Katilimci');
         socket.emit('join-room', { roomId: inputRoomId });
 
         socket.on('room-joined', async (data) => {
@@ -274,6 +309,7 @@ document.addEventListener('DOMContentLoaded', () => {
             hostSection.classList.remove('active');
             joinSection.classList.remove('active');
             videoSection.classList.remove('hidden');
+            markLiveMode(true);
 
             setupVideoPlayer(data.videoLink, data.audioLink, data.subtitleLink);
 
@@ -316,35 +352,18 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     videoPlayer.addEventListener('play', () => {
-        if (suppressLocalEvents) {
+        if (suppressLocalEvents || !isHost) {
             return;
         }
-
-        if (!isHost) {
-            videoPlayer.pause();
-            videoPlayer.currentTime = lastServerState.currentTime;
-            return;
-        }
-
-        isPlaying = true;
-        playPauseBtn.innerHTML = '⏸️ Duraklat';
+        playPauseBtn.innerHTML = '⏸ Duraklat';
         emitHostState(true);
     });
 
     videoPlayer.addEventListener('pause', () => {
-        if (suppressLocalEvents) {
+        if (suppressLocalEvents || !isHost) {
             return;
         }
-
-        if (!isHost) {
-            if (lastServerState.isPlaying) {
-                videoPlayer.play().catch(() => {});
-            }
-            return;
-        }
-
-        isPlaying = false;
-        playPauseBtn.innerHTML = '▶️ Oynat';
+        playPauseBtn.innerHTML = '▶ Oynat';
         emitHostState(true);
     });
 
@@ -407,18 +426,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function resetUI() {
         if (socket) {
+            socket.removeAllListeners();
             socket.disconnect();
             socket = null;
         }
 
         isHost = false;
         roomId = null;
-        isPlaying = false;
+        lastSyncAt = 0;
         suppressLocalEvents = false;
         lastServerState = { isPlaying: false, currentTime: 0 };
+        nextParticipantPlayAttemptAt = 0;
 
         videoSection.classList.add('hidden');
-        videoSection.classList.remove('participant-locked', 'mobile-view', 'mobile-participant');
+        markLiveMode(false);
+        videoSection.classList.remove('participant-locked', 'mobile-participant');
         document.querySelector('.tabs').style.display = 'flex';
         document.querySelector('h1').textContent = 'Video Senkronizasyon Platformu';
 
@@ -434,12 +456,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
         videoPlayer.pause();
         videoPlayer.currentTime = 0;
+        videoPlayer.playbackRate = 1;
         videoPlayer.src = '';
+        videoPlayer.controls = true;
         subtitleTrack.src = '';
         subtitleTrack.mode = 'disabled';
         volumeRange.value = '1';
         videoPlayer.volume = 1;
         participantCountSpan.textContent = 'Katilimci: 0';
+        playPauseBtn.innerHTML = '▶ Oynat';
     }
 
     document.addEventListener('visibilitychange', () => {
