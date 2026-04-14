@@ -59,11 +59,33 @@
                     <button id="playPauseBtn">▶️ Oynat</button>
                     <button id="next15s">⏩ 15s</button>
                     <button id="fullscreenBtn">⛶ Tam Ekran</button>
+                    <label class="volume-control" for="volumeRange">Ses
+                        <input type="range" id="volumeRange" min="0" max="1" step="0.05" value="1">
+                    </label>
                     <span id="participantCount">Katılımcı: 0</span>
+                </div>
+
+                <div id="hostSettingsPanel" class="host-settings hidden">
+                    <h3>Yayin Ayarlari (Host)</h3>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="hostVideoLink">Video Linki</label>
+                            <input type="text" id="hostVideoLink" placeholder="Video URL">
+                        </div>
+                        <div class="form-group">
+                            <label for="hostAudioLink">Ses Linki (Opsiyonel)</label>
+                            <input type="text" id="hostAudioLink" placeholder="Ses URL">
+                        </div>
+                        <div class="form-group">
+                            <label for="hostSubtitleLink">Alt Yazi Linki (Opsiyonel)</label>
+                            <input type="text" id="hostSubtitleLink" placeholder="Alt yazi URL">
+                        </div>
+                    </div>
+                    <button id="applyMediaLinksBtn" class="primary-btn">Filmi Degistir ve Senkronla</button>
                 </div>
                 
                 <div class="video-container">
-                    <video id="videoPlayer" controls>
+                    <video id="videoPlayer" controls controlslist="nodownload noplaybackrate">
                         <track id="subtitleTrack" kind="subtitles" label="Turkish" srclang="tr">
                     </video>
                 </div>

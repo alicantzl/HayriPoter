@@ -19,145 +19,156 @@ const io = socketIo(server, {
 
             callback(new Error('Not allowed by CORS'));
         },
-        methods: ["GET", "POST"]
+        methods: ['GET', 'POST']
     }
 });
 
-// Serve static files
 app.use(express.static(__dirname));
 
 app.get('/health', (_req, res) => {
     res.status(200).json({ ok: true });
 });
 
-// Store room data
 const rooms = new Map();
 
-// Socket.IO connection handling
+function sanitizeLink(value) {
+    const text = typeof value === 'string' ? value.trim() : '';
+    return text || null;
+}
+
+function emitParticipantCount(roomId, room) {
+    io.to(roomId).emit('participant-count-update', room.participants.size);
+}
+
 io.on('connection', (socket) => {
     console.log('User connected:', socket.id);
 
-    // Handle room creation
     socket.on('create-room', (data) => {
-        const roomId = Math.random().toString(36).substr(2, 9).toUpperCase();
-        
-        // Create room data
+        const roomId = Math.random().toString(36).slice(2, 11).toUpperCase();
         const roomData = {
             id: roomId,
             hostId: socket.id,
-            videoLink: data.videoLink,
-            audioLink: data.audioLink || null,
-            subtitleLink: data.subtitleLink || null,
+            videoLink: sanitizeLink(data.videoLink),
+            audioLink: sanitizeLink(data.audioLink),
+            subtitleLink: sanitizeLink(data.subtitleLink),
             isPlaying: false,
             currentTime: 0,
             participants: new Set([socket.id])
         };
-        
+
         rooms.set(roomId, roomData);
         socket.join(roomId);
-        
-        // Notify host that room was created
+        socket.data.roomId = roomId;
+        socket.data.role = 'host';
+
         socket.emit('room-created', { roomId });
-        
+        emitParticipantCount(roomId, roomData);
+
         console.log(`Room created: ${roomId} by ${socket.id}`);
     });
 
-    // Handle joining a room
     socket.on('join-room', (data) => {
         const roomId = (data.roomId || '').trim().toUpperCase();
         const room = rooms.get(roomId);
-        
+
         if (!room) {
-            socket.emit('error', 'Oda bulunamadı');
+            socket.emit('error', 'Oda bulunamadi');
             return;
         }
-        
-        // Add participant to room
+
         room.participants.add(socket.id);
         socket.join(roomId);
-        
-        // Notify client that they joined the room
+        socket.data.roomId = roomId;
+        socket.data.role = 'participant';
+
         socket.emit('room-joined', {
             videoLink: room.videoLink,
             audioLink: room.audioLink,
             subtitleLink: room.subtitleLink
         });
-        
-        // Update participant count for all clients in room
-        io.to(roomId).emit('participant-count-update', room.participants.size);
-        
-        // Send current media state to new participant
+
+        emitParticipantCount(roomId, room);
+
         socket.emit('media-state-update', {
             isPlaying: room.isPlaying,
             currentTime: room.currentTime
         });
-        
+
         console.log(`User ${socket.id} joined room: ${roomId}`);
     });
 
-    // Handle media state changes from host
     socket.on('media-state-change', (data) => {
-        // Find the room this socket belongs to
-        let roomId = null;
-        let room = null;
-        
-        for (const [id, r] of rooms.entries()) {
-            if (r.hostId === socket.id) {
-                roomId = id;
-                room = r;
-                break;
-            }
+        const roomId = socket.data.roomId;
+        const room = roomId ? rooms.get(roomId) : null;
+
+        if (!room || room.hostId !== socket.id) {
+            return;
         }
-        
-        if (!room) {
-            // Check if user is a participant in any room
-            for (const [id, r] of rooms.entries()) {
-                if (r.participants.has(socket.id)) {
-                    roomId = id;
-                    room = r;
-                    break;
-                }
-            }
-        }
-        
-        if (room && room.hostId === socket.id) {
-            // Only host can update media state
-            room.isPlaying = data.isPlaying;
-            room.currentTime = data.currentTime;
-            
-            // Broadcast to all participants in the room
-            io.to(roomId).emit('media-state-update', {
-                isPlaying: room.isPlaying,
-                currentTime: room.currentTime
-            });
-            
-            console.log(`Media state updated in room ${roomId}: playing=${room.isPlaying}, time=${room.currentTime}`);
-        }
+
+        room.isPlaying = Boolean(data.isPlaying);
+        room.currentTime = Number(data.currentTime) || 0;
+
+        socket.to(roomId).emit('media-state-update', {
+            isPlaying: room.isPlaying,
+            currentTime: room.currentTime
+        });
     });
 
-    // Handle disconnection
+    socket.on('update-media-links', (data) => {
+        const roomId = socket.data.roomId;
+        const room = roomId ? rooms.get(roomId) : null;
+
+        if (!room || room.hostId !== socket.id) {
+            return;
+        }
+
+        const videoLink = sanitizeLink(data.videoLink);
+        if (!videoLink) {
+            socket.emit('error', 'Video linki zorunludur');
+            return;
+        }
+
+        room.videoLink = videoLink;
+        room.audioLink = sanitizeLink(data.audioLink);
+        room.subtitleLink = sanitizeLink(data.subtitleLink);
+        room.currentTime = 0;
+        room.isPlaying = false;
+
+        io.to(roomId).emit('media-source-update', {
+            videoLink: room.videoLink,
+            audioLink: room.audioLink,
+            subtitleLink: room.subtitleLink,
+            isPlaying: room.isPlaying,
+            currentTime: room.currentTime
+        });
+
+        io.to(roomId).emit('media-state-update', {
+            isPlaying: room.isPlaying,
+            currentTime: room.currentTime
+        });
+    });
+
     socket.on('disconnect', (reason) => {
         console.log('User disconnected:', socket.id, reason);
-        
-        // Find rooms this user was in
-        for (const [roomId, room] of rooms.entries()) {
-            // Remove participant
-            room.participants.delete(socket.id);
-            
-            // If host left, end the room for everyone
-            if (room.hostId === socket.id) {
-                io.to(roomId).emit('disconnected-from-room');
-                rooms.delete(roomId);
-                console.log(`Room ${roomId} ended because host left`);
-            } else {
-                // Update participant count
-                io.to(roomId).emit('participant-count-update', room.participants.size);
-            }
+
+        const roomId = socket.data.roomId;
+        const room = roomId ? rooms.get(roomId) : null;
+        if (!room) {
+            return;
         }
+
+        room.participants.delete(socket.id);
+
+        if (room.hostId === socket.id) {
+            io.to(roomId).emit('disconnected-from-room');
+            rooms.delete(roomId);
+            return;
+        }
+
+        emitParticipantCount(roomId, room);
     });
 });
 
-// Start server
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
