@@ -1,0 +1,23 @@
+{
+  "name": "sync-video-site",
+  "version": "1.0.0",
+  "description": "Video Senkronizasyon Platformu - Join ve Host olarak video izleme",
+  "main": "sync-video-site/server.js",
+  "scripts": {
+    "start": "node sync-video-site/server.js",
+    "dev": "node sync-video-site/server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "video",
+    "synchronization",
+    "socket.io",
+    "realtime"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^5.2.1",
+    "socket.io": "^4.8.3"
+  }
+}

@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Senkronizasyon</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Sora:wght@500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Video Senkronizasyon Platformu</h1>
+            <p class="tagline">Ayni anda izle, tek host ile herkesi senkron tut.</p>
+        </header>
+        
+        <main>
+            <div class="tabs">
+                <button class="tab-btn active" id="hostTab">Host Ol</button>
+                <button class="tab-btn" id="joinTab">Katıl</button>
+            </div>
+            
+            <div class="tab-content">
+                <!-- Host Section -->
+                <div id="hostSection" class="tab-pane active">
+                    <h2>Oda Oluştur</h2>
+                    <div class="form-group">
+                        <label for="videoLink">Video Linki:</label>
+                        <input type="text" id="videoLink" placeholder="Video URL'si">
+                    </div>
+                    <div class="form-group">
+                        <label for="audioLink">Ses Linki (Opsiyonel):</label>
+                        <input type="text" id="audioLink" placeholder="Ses URL'si">
+                    </div>
+                    <div class="form-group">
+                        <label for="subtitleLink">Alt Yazı Linki (Opsiyonel):</label>
+                        <input type="text" id="subtitleLink" placeholder="Alt Yazı URL'si">
+                    </div>
+                    <button id="createRoomBtn" class="primary-btn">Oda Oluştur ve Yayını Başlat</button>
+                </div>
+                
+                <!-- Join Section -->
+                <div id="joinSection" class="tab-pane">
+                    <h2>Odaya Katıl</h2>
+                    <div class="form-group">
+                        <label for="roomId">Oda ID:</label>
+                        <input type="text" id="roomId" placeholder="Oda ID'sini girin">
+                    </div>
+                    <button id="joinRoomBtn" class="primary-btn">Odaya Katıl</button>
+                </div>
+            </div>
+            
+            <!-- Video Player Section (hidden initially) -->
+            <div id="videoSection" class="hidden">
+                <div class="player-controls">
+                    <button id="prev15s">⏪ 15s</button>
+                    <button id="playPauseBtn">▶️ Oynat</button>
+                    <button id="next15s">⏩ 15s</button>
+                    <button id="fullscreenBtn">⛶ Tam Ekran</button>
+                    <span id="participantCount">Katılımcı: 0</span>
+                </div>
+                
+                <div class="video-container">
+                    <video id="videoPlayer" controls>
+                        <track id="subtitleTrack" kind="subtitles" label="Turkish" srclang="tr">
+                    </video>
+                </div>
+                
+                <div id="connectionStatus" class="status-indicator">
+                    <span id="statusText">Bağlantı: Bağlantı kuruluyor...</span>
+                </div>
+            </div>
+        </main>
+    </div>
+    
+    <script src="https://cdn.socket.io/4.8.3/socket.io.min.js" crossorigin="anonymous"></script>
+    <script src="config.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
